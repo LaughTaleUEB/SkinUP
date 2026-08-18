@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkinUp - CS2 Trade-Up Analyzer (Beta)</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Lenis Smooth Scroll -->
+    <script src="https://unpkg.com/lenis@1.1.18/dist/lenis.min.js"></script>
+</head>
+<body>
+    <header id="main-header">
+        <div class="header-brand">
+            <a href="#" onclick="switchTab('all'); return false;" class="logo-link">
+                <img src="skinup-logo.png" alt="SkinUp Logo" class="brand-logo-img">
+                <span class="beta-badge">Beta</span>
+            </a>
+        </div>
+
+        <!-- Site logosunun sağındaki Sekme Geçiş Butonları -->
+        <nav class="header-nav" id="main-nav">
+            <button class="nav-tab active" data-tab="all">
+                Home
+            </button>
+            <button class="nav-tab" data-tab="collections">
+                <img src="cs-collections-logo.png" alt="CS Logo" class="nav-cs-icon"> Collections <span class="amp">&amp;</span> Cases
+            </button>
+            <button class="nav-tab" data-tab="tradeups">
+                <img src="tradeups-icon.png" alt="Trade Ups Icon" class="nav-tradeups-icon"> Trade Ups
+            </button>
+        </nav>
+    </header>
+ 
+    <!-- Page Scroll Progress Indicator (Top-Center Multi-Segment Color-Coded Bar) -->
+    <div id="page-progress-dock" class="page-progress-dock" aria-label="Page Scroll Progress">
+        <div class="progress-track" id="progress-track">
+            <div class="progress-segment segment-hero" data-section="hero-overview-section" title="Home (Overview)">
+                <div class="segment-fill"></div>
+            </div>
+            <div class="progress-segment segment-collections" data-section="collections-section" title="Collections & Cases">
+                <div class="segment-fill"></div>
+            </div>
+            <div class="progress-segment segment-tradeups" data-section="trade-ups-section" title="Trade Ups">
+                <div class="segment-fill"></div>
+            </div>
+            <div class="progress-segment segment-beta" data-section="beta-notice-section" title="Beta Notice">
+                <div class="segment-fill"></div>
+            </div>
+        </div>
+    </div>
+
+    <main id="section-slider" class="section-slider">
+        <!-- BÖLME 1: Platform / Sekme Açıklamaları (Hero Overview) -->
+        <section id="hero-overview-section" class="page-section section-active">
+            <div class="overview-container">
+                <div class="hero-header">
+                    <h2>SkinUp Platformu Özellikleri</h2>
+                    <p>Platform sekmelerinin detaylı açıklamaları ve kullanım alanları</p>
+                </div>
+                
+                <div class="overview-cards">
+                    <div class="overview-card" data-tab-target="collections">
+                        <div class="card-badge">
+                            <img src="cs-collections-logo.png" alt="CS Logo" class="badge-cs-icon"> Sekme 1
+                        </div>
+                        <div class="card-icon">
+                            <img src="cs-collections-logo.png" alt="CS Logo" class="overview-cs-logo">
+                        </div>
+                        <h3>Collections <span class="amp">&amp;</span> Cases (Koleksiyonlar <span class="amp">&amp;</span> Kasalar)</h3>
+                        <p>
+                            CS2 koleksiyonlarını ve içerisindeki skinleri detaylıca inceleyin. Skin görselleri, 
+                            nadirlik sınıfları ve Factory New'den Battle-Scarred'a kadar float aralıklarını görün.
+                        </p>
+                        <button class="btn-card-action" data-action-tab="collections">
+                            Koleksiyonları Keşfet &rarr;
+                        </button>
+                    </div>
+
+                    <div class="overview-card" data-tab-target="tradeups">
+                        <div class="card-badge"><img src="tradeups-icon.png" alt="Trade Ups Icon" class="badge-tradeups-icon"> Sekme 2</div>
+                        <div class="card-icon">
+                            <img src="tradeups-icon.png" alt="Trade Ups Icon" class="overview-tradeups-logo">
+                        </div>
+                        <h3>Trade Ups (Trade-Up Analiz)</h3>
+                        <p>
+                            Karlı trade-up kombinasyonlarını hesaplayın ve filtreleyin. Min. Profit %, Min. Success %, 
+                            maliyet aralıkları ve StatTrak™ filtreleri ile en ideal trade-up stratejilerini bulun.
+                        </p>
+                        <button class="btn-card-action" data-action-tab="tradeups">
+                            Trade-Up Analizi Yap &rarr;
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- BÖLME 2: Koleksiyonlar & Kasalar -->
+        <section id="collections-section" class="page-section">
+            <h2 class="title-with-cs-icon">
+                <img src="cs-collections-logo.png" alt="CS Logo" class="title-cs-icon"> Collections <span class="amp">&amp;</span> Cases
+            </h2>
+
+            <!-- Sekme 1 & Sekme 2 İçin Alt Sekmeler: Collections / Cases & Arama Çubuğu -->
+            <div class="sub-nav-tabs">
+                <!-- Arama Çubuğu (En solda - Sağa doğru genişleyen) -->
+                <div class="sub-nav-search" id="subnav-search-container">
+                    <button class="search-toggle-btn" id="search-toggle-btn" type="button" title="Koleksiyon veya Kasa Ara">
+                        <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                    </button>
+                    <input type="text" class="search-input" id="collections-search-input" placeholder="Koleksiyon veya kasa ara..." autocomplete="off">
+                </div>
+
+                <button class="sub-tab active" data-subtab="collections">Collections</button>
+                <button class="sub-tab" data-subtab="cases">Cases</button>
+            </div>
+
+            <!-- Collections İçeriği -->
+            <div id="collections-tab-content">
+                <div id="collection-list">
+                    <!-- Beta: Harlequin Collection Card -->
+                    <div class="collection-card" id="harlequin-card">
+                        <div class="collection-icon">
+                            <img src="https://raw.githubusercontent.com/ByMykel/counter-strike-image-tracker/main/static/panorama/images/econ/set_icons/set_timed_drops_exuberant.svg" alt="Harlequin Collection Icon" onError="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                            <span style="display:none;">🎭</span>
+                        </div>
+                        <div class="collection-info">
+                            <h3>Harlequin Collection</h3>
+                            <p>19 Skins • Tap to view</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Koleksiyona tıklanınca açılacak skinler -->
+                <div id="skins-container" class="hidden">
+                    <h3>
+                        <span>Skins (The Harlequin Collection)</span>
+                    </h3>
+                    <div id="skins-list">
+                        <!-- JS ile buraya skinler dinamik yüklenecek -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cases İçeriği -->
+            <div id="cases-tab-content" class="hidden">
+                <div id="cases-list">
+                    <!-- Dreams & Nightmares Case Card -->
+                    <div class="collection-card case-card" id="dreams-card">
+                        <div class="collection-icon case-icon">
+                            <img src="https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGJKz2lu_XsnXwtmkJjSU91dh8bj35VTqVBP4io_frnIV7Kb5OaU-JqfHDzXFle0u4LY8Gy_kkRgisGzcm4v4J3vDOAQmDMdyRvlK7EcmeCU3yw" alt="Dreams & Nightmares Case" onError="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                            <span style="display:none;">📦</span>
+                        </div>
+                        <div class="collection-info">
+                            <h3>Dreams <span class="amp">&amp;</span> Nightmares Case</h3>
+                            <p>17 Skins + Rare Special Item • Tap to view</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Kasaya tıklanınca açılacak skinler -->
+                <div id="case-skins-container" class="hidden">
+                    <h3>
+                        <span>Skins (Dreams <span class="amp">&amp;</span> Nightmares Case)</span>
+                    </h3>
+                    <div id="case-skins-list">
+                        <!-- JS ile buraya kasadaki skinler dinamik yüklenecek -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- BÖLME 3: Trade Ups (Filtreleme Alanı) -->
+        <section id="trade-ups-section" class="page-section">
+            <h2>Trade Ups</h2>
+            <div class="filter-container">
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label for="filter-cost">Cost</label>
+                        <select id="filter-cost">
+                            <option>All Costs</option>
+                            <option>Under $5</option>
+                            <option>Under $20</option>
+                            <option>Under $50</option>
+                            <option>Over $50</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="filter-collection">Collection</label>
+                        <select id="filter-collection">
+                            <option>All Collections</option>
+                            <option selected>The Harlequin Collection</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="filter-rarity">Rarity</label>
+                        <select id="filter-rarity">
+                            <option>All Rarities</option>
+                            <option>Consumer Grade</option>
+                            <option>Industrial Grade</option>
+                            <option>Mil-Spec Grade</option>
+                            <option>Restricted</option>
+                            <option>Classified</option>
+                            <option>Covert</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="filter-min-profit">Min. Profit %</label>
+                        <input type="number" id="filter-min-profit" placeholder="e.g. 120">
+                    </div>
+                    <div class="filter-group">
+                        <label for="filter-min-success">Min. Success %</label>
+                        <input type="number" id="filter-min-success" placeholder="e.g. 60">
+                    </div>
+                    <div class="filter-group">
+                        <label for="filter-stattrak">StatTrak™</label>
+                        <select id="filter-stattrak">
+                            <option>All</option>
+                            <option>Yes</option>
+                            <option>No</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="filter-row full-width">
+                    <div class="filter-group">
+                        <label for="sort-by">Sort By</label>
+                        <select id="sort-by">
+                            <option>Newest First</option>
+                            <option>Highest Profit %</option>
+                            <option>Lowest Profit %</option>
+                            <option>Highest Input Cost</option>
+                            <option>Lowest Input Cost</option>
+                            <option>Highest Expected Value</option>
+                            <option>Lowest Expected Value</option>
+                            <option>Lowest Risk (High Success Rate)</option>
+                            <option>Highest Risk (Low Success Rate)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="filter-actions">
+                    <button class="btn-primary" id="btn-filter">Filter</button>
+                    <button class="btn-secondary" id="btn-reset">Reset</button>
+                </div>
+            </div>
+
+            <!-- Sonuçlar Alanı -->
+            <div id="trade-up-results"></div>
+        </section>
+
+        <!-- BÖLME 4: Beta Duyuru / Alt Bildirim Alanı -->
+        <section id="beta-notice-section" class="page-section" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
+            <div class="beta-notice" style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; width: 100%; max-width: 850px; margin: 0 auto;">
+                <div class="beta-notice-icon" style="display: flex; align-items: center; justify-content: center; width: 100%; margin-bottom: 1rem;">
+                    <img src="skinup-icon.png" alt="SkinUp Icon" class="notice-skinup-icon">
+                </div>
+                <p class="beta-notice-text" style="text-align: center; width: 100%; margin: 0 auto; display: block;"><em style="text-align: center; display: inline-block;">Beta aşaması: Karlı trade-up algoritması ve fiyatlar henüz sisteme entegre edilmemiştir.</em></p>
+            </div>
+        </section>
+    </main>
+
+    <!-- Bilgi Balonu (Modal Popup) -->
+    <div id="skin-modal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-btn" id="close-modal">&times;</span>
+            
+            <div class="modal-header-img" id="modal-image-container">
+                <!-- Skin image dynamically placed here -->
+            </div>
+
+            <h2 id="modal-skin-name">Skin Adı</h2>
+
+            <div class="modal-details">
+                <p><strong>Weapon:</strong> <span id="modal-weapon">AWP</span></p>
+                <p id="modal-phase-row" class="hidden"><strong>Phase / Variant:</strong> <span id="modal-phase" class="phase-badge">Phase 1</span></p>
+                <p><strong>Rarity:</strong> <span id="modal-rarity">Restricted</span></p>
+                <p><strong>Float Aralığı:</strong> <span id="modal-float">0.00 – 0.70</span></p>
+            </div>
+
+            <!-- Wear Tabs Container (Normal / StatTrak) inspired by Reference 2 -->
+            <div class="wear-tabs-container">
+                <button class="wear-tab active" id="tab-normal" data-wear-mode="normal">Normal</button>
+                <button class="wear-tab" id="tab-stattrak" data-wear-mode="stattrak">StatTrak™</button>
+            </div>
+
+            <!-- Wear Conditions matching Reference 2 -->
+            <div class="wear-conditions" id="modal-wear-conditions">
+                <!-- Dynamically populated from script.js -->
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

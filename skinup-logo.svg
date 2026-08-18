@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 90" width="320" height="90">
+  <defs>
+    <!-- Referans 3 Original Pastel Color Palette -->
+    <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C5A3E5" />
+      <stop offset="100%" stop-color="#B690DD" />
+    </linearGradient>
+    <linearGradient id="pinkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FA9CBD" />
+      <stop offset="100%" stop-color="#F68BB3" />
+    </linearGradient>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8BBDFC" />
+      <stop offset="100%" stop-color="#70A8FA" />
+    </linearGradient>
+
+    <clipPath id="circleClip">
+      <circle cx="45" cy="45" r="40" />
+    </clipPath>
+  </defs>
+
+  <!-- Logo Emblem (Faithful to Referans 3 Original Emblem) -->
+  <g transform="translate(0, 0)">
+    <g clip-path="url(#circleClip)">
+      <!-- Top-Left Sector (Purple) -->
+      <path d="M 45 45 L 45 -10 L -10 -10 L -10 100 L 45 100 Z" fill="url(#purpleGrad)" />
+      <!-- Top-Right Sector (Pink) -->
+      <path d="M 45 45 L 45 -10 L 100 -10 L 100 53 Z" fill="url(#pinkGrad)" />
+      <!-- Bottom Sector (Blue) -->
+      <path d="M 45 45 L 100 53 L 100 100 L -10 100 Z" fill="url(#blueGrad)" />
+
+      <!-- Original White Cutout Arrow -->
+      <path d="M 14 63 C 18 47, 27 35, 31 30 L 64 24 L 52.5 47.5 L 42.5 40 C 36 55, 29 69, 25 81 A 40 40 0 0 1 14 63 Z" fill="#FFFFFF" />
+    </g>
+  </g>
+
+  <!-- Wordmark "SkinUp" matching Referans 3 colors (Sk: Purple, i-dot: Pink, i-stem: Purple, n: Purple, Up: Blue) -->
+  <g transform="translate(98, 60)">
+    <text font-family="'Outfit', 'Inter', sans-serif" font-size="52" font-weight="800" letter-spacing="-1">
+      <tspan fill="url(#purpleGrad)">Sk</tspan><tspan fill="url(#purpleGrad)">ı</tspan><tspan fill="url(#purpleGrad)">n</tspan><tspan fill="url(#blueGrad)">Up</tspan>
+    </text>
+    <!-- Pink dot aligned directly over the stem of 'i' -->
+    <circle cx="57.5" cy="-35.5" r="4.8" fill="url(#pinkGrad)" />
+  </g>
+</svg>
