@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SkinUp - CS2 Trade-Up Analyzer (Beta)</title>
     <link rel="stylesheet" href="style.css">
     <!-- Lenis Smooth Scroll -->
@@ -23,10 +23,10 @@
                 Home
             </button>
             <button class="nav-tab" data-tab="collections">
-                <img src="cs-collections-logo.png" alt="CS Logo" class="nav-cs-icon"> Collections <span class="amp">&amp;</span> Cases
+                <img src="cs-collections-logo.png" alt="CS Logo" class="nav-cs-icon"> Collections<span class="nav-sub-label"> <span class="amp">&amp;</span> Cases</span>
             </button>
             <button class="nav-tab" data-tab="tradeups">
-                <img src="tradeups-icon.png" alt="Trade Ups Icon" class="nav-tradeups-icon"> Trade Ups
+                <img src="tradeups-icon.png" alt="Trade Ups Icon" class="nav-tradeups-icon"> Trade<span class="nav-sub-label"> Ups</span>
             </button>
         </nav>
     </header>
@@ -262,9 +262,10 @@
         </section>
     </main>
 
-    <!-- Bilgi Balonu (Modal Popup) -->
+    <!-- Bilgi Balonu (Modal Popup / Mobile Bottom Sheet) -->
     <div id="skin-modal" class="modal hidden">
         <div class="modal-content">
+            <div class="modal-drag-handle"></div>
             <span class="close-btn" id="close-modal">&times;</span>
             
             <div class="modal-header-img" id="modal-image-container">
