@@ -1,14 +1,39 @@
 // CS2 Trade-Up Analyzer - Client JavaScript
-const API_URL = 'https://raw.githubusercontent.com/ByMykel/CSGO-API/main/public/api/en/skins.json';
+const CRATES_URL = './crates.json';
+const COLLECTIONS_URL = './collections.json';
 
-// App State
-let allSkins = [];
-let harlequinSkins = [];
-let dreamsNightmaresSkins = [];
+// App State (cached in memory on initial load)
+let cachedCrates = [];
+let cachedCases = [];
+let cachedCollections = []; // All 93 weapon collections supporting trade-up
+let cachedWeeklyDrops = []; // 5 active weekly drop pool containers
+let cachedLimitedEdition = null; // Limited Edition Item collection
 let activeCollection = null;
 let activeCase = null;
+let activeWeeklyDrop = null;
+let activeLimitedEdition = null;
 let currentModalSkin = null;
 let activeWearMode = 'normal'; // 'normal' or 'stattrak'
+
+// Active weekly drop pool container names
+const WEEKLY_DROP_NAMES = [
+    'Sealed Dead Hand Terminal',
+    'Sealed Genesis Terminal',
+    'Kilowatt Case',
+    'Revolution Case',
+    'Dreams & Nightmares Case'
+];
+
+// Helper for HTML Escaping
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 
 // Wear Condition Standard Ranges
 const WEAR_RANGES = [
@@ -21,14 +46,25 @@ const WEAR_RANGES = [
 
 // DOM Elements
 const collectionList = document.getElementById('collection-list');
-const harlequinCard = document.getElementById('harlequin-card');
-const skinsContainer = document.getElementById('skins-container');
-const skinsList = document.getElementById('skins-list');
-const dreamsCard = document.getElementById('dreams-card');
-const caseSkinsContainer = document.getElementById('case-skins-container');
-const caseSkinsList = document.getElementById('case-skins-list');
+const casesList = document.getElementById('cases-list');
+const weeklyDropsList = document.getElementById('weekly-drops-list');
+const limitedEditionList = document.getElementById('limited-edition-list');
+
 const skinModal = document.getElementById('skin-modal');
 const closeModalBtn = document.getElementById('close-modal');
+
+// Container Overlay Modal Elements
+const containerModal = document.getElementById('container-modal');
+const closeContainerModalBtn = document.getElementById('close-container-modal');
+const containerModalTitle = document.getElementById('container-modal-title');
+const containerModalCount = document.getElementById('container-modal-count');
+const containerModalType = document.getElementById('container-modal-type');
+const containerModalIconImg = document.getElementById('container-modal-icon-img');
+const containerModalBody = document.getElementById('container-modal-body');
+const containerSkinsList = document.getElementById('container-skins-list');
+
+let isContainerModalOpen = false;
+let activeContainerItem = null;
 
 // Filter DOM Elements
 const filterCost = document.getElementById('filter-cost');
@@ -63,7 +99,7 @@ let lenis = null;
 
 // Initialize App
 document.addEventListener('DOMContentLoaded', () => {
-    fetchSkinData();
+    fetchLocalData();
     setupEventListeners();
     initSmoothScroll();
     setupSearchLogic();
@@ -329,32 +365,255 @@ function setupProgressIndicatorClicks() {
     });
 }
 
-// Fetch CS2 Skins Data from API
-async function fetchSkinData() {
-    try {
-        harlequinCard.style.opacity = '0.6';
-        const response = await fetch(API_URL);
-        if (!response.ok) throw new Error('API fetch error');
-        allSkins = await response.json();
+// Filter out non-weapon cosmetic packs (stickers, charms, graffiti, patches, agents, limited edition)
+function isTradeUpWeaponCollection(col) {
+    if (!col || !col.contains || col.contains.length === 0) return false;
+    const nameLower = (col.name || '').toLowerCase();
 
-        // Filter skins belonging to Harlequin Collection
-        harlequinSkins = allSkins.filter(s =>
-            s.collections && s.collections.some(c => c.name.toLowerCase().includes('harlequin'))
-        );
+    // Exclude Limited Edition Item (has its own dedicated tab)
+    if (nameLower === 'limited edition item' || col.id === 'collection-set-xpshop-wpn-01') return false;
 
-        // Filter skins belonging to Dreams & Nightmares Case
-        dreamsNightmaresSkins = allSkins.filter(s =>
-            (s.crates && s.crates.some(c => c.name.toLowerCase().includes('dreams & nightmares'))) ||
-            (s.collections && s.collections.some(c => c.name.toLowerCase().includes('dreams & nightmares')))
-        );
+    // Exclude non-weapon cosmetic packs by collection name
+    const cosmeticKeywords = ['sticker', 'charm', 'graffiti', 'patch', 'agent'];
+    if (cosmeticKeywords.some(kw => nameLower.includes(kw))) return false;
 
-        harlequinCard.style.opacity = '1';
-        console.log(`Loaded ${allSkins.length} skins, Harlequin count: ${harlequinSkins.length}, Dreams & Nightmares count: ${dreamsNightmaresSkins.length}`);
-    } catch (err) {
-        console.error('Failed to load skin data:', err);
-        // Fallback demo data if offline/network issue
-        loadFallbackData();
+    // Exclude collections whose items contain non-weapon cosmetics
+    const nonWeaponIdPrefixes = ['sticker-', 'keychain-', 'graffiti-', 'agent-', 'patch-'];
+    if (col.contains.some(item => item && item.id && nonWeaponIdPrefixes.some(p => item.id.startsWith(p)))) {
+        return false;
     }
+
+    return true;
+}
+
+// Deduplicate Items by Name: Ensure each skin appears strictly ONCE based on its base name
+function deduplicateItemsByName(items) {
+    if (!Array.isArray(items)) return [];
+    return items.filter((item, index, self) => {
+        if (!item) return false;
+        const nameKey = item.name || item.id;
+        if (!nameKey) return false;
+        return index === self.findIndex((t) => t && (t.name || t.id) === nameKey);
+    });
+}
+
+// Fetch and Parse Local CS2 Data (crates.json & collections.json)
+async function fetchLocalData() {
+    try {
+        const [cratesRes, collectionsRes] = await Promise.all([
+            fetch(CRATES_URL),
+            fetch(COLLECTIONS_URL)
+        ]);
+
+        if (!cratesRes.ok) throw new Error(`HTTP error loading crates.json: ${cratesRes.status}`);
+        if (!collectionsRes.ok) throw new Error(`HTTP error loading collections.json: ${collectionsRes.status}`);
+
+        cachedCrates = await cratesRes.json();
+        const rawCollections = await collectionsRes.json();
+
+        // Deduplicate items in crates and collections by base name
+        cachedCrates.forEach(c => {
+            if (c.contains) c.contains = deduplicateItemsByName(c.contains);
+            if (c.contains_rare) c.contains_rare = deduplicateItemsByName(c.contains_rare);
+        });
+        rawCollections.forEach(c => {
+            if (c.contains) c.contains = deduplicateItemsByName(c.contains);
+            if (c.contains_rare) c.contains_rare = deduplicateItemsByName(c.contains_rare);
+        });
+
+        // 1. Cases Tab: filter crates for type === "Case"
+        cachedCases = cachedCrates.filter(c => c && c.type === 'Case');
+
+        // 2. Weekly Drops Tab: active weekly drop pool containers
+        cachedWeeklyDrops = WEEKLY_DROP_NAMES.map(name => {
+            return cachedCrates.find(c => c && c.name && c.name.toLowerCase() === name.toLowerCase());
+        }).filter(Boolean);
+
+        // 3. Limited Edition Tab: find "Limited Edition Item"
+        cachedLimitedEdition = rawCollections.find(c => c.name === 'Limited Edition Item' || c.id === 'collection-set-xpshop-wpn-01');
+
+        // Flag Limited Edition skins with can_trade_up: false and is_trade_up_eligible: false
+        if (cachedLimitedEdition && cachedLimitedEdition.contains) {
+            cachedLimitedEdition.contains.forEach(skin => {
+                skin.can_trade_up = false;
+                skin.is_trade_up_eligible = false;
+            });
+        }
+
+        // 4. Collections Tab: only actual weapon skin collections that support trade-up contracts
+        cachedCollections = rawCollections.filter(isTradeUpWeaponCollection);
+
+        // Flag all regular weapon skins as eligible for trade-up contracts
+        cachedCollections.forEach(c => {
+            c.contains?.forEach(skin => {
+                skin.can_trade_up = true;
+                skin.is_trade_up_eligible = true;
+            });
+        });
+        cachedCases.forEach(c => {
+            c.contains?.forEach(skin => {
+                skin.can_trade_up = true;
+                skin.is_trade_up_eligible = true;
+            });
+            c.contains_rare?.forEach(skin => {
+                skin.can_trade_up = true;
+                skin.is_trade_up_eligible = true;
+            });
+        });
+        cachedWeeklyDrops.forEach(c => {
+            c.contains?.forEach(skin => {
+                skin.can_trade_up = true;
+                skin.is_trade_up_eligible = true;
+            });
+            c.contains_rare?.forEach(skin => {
+                skin.can_trade_up = true;
+                skin.is_trade_up_eligible = true;
+            });
+        });
+
+        console.log(`Loaded: ${cachedCollections.length} trade-up collections, ${cachedCases.length} cases, ${cachedWeeklyDrops.length} weekly drops, 1 limited edition.`);
+
+        // Batch render each tab's container cards into DOM
+        renderCollectionsList(cachedCollections);
+        renderCasesList(cachedCases);
+        renderWeeklyDropsList(cachedWeeklyDrops);
+        renderLimitedEdition(cachedLimitedEdition);
+
+        // Populate trade-up collections filter options
+        populateTradeUpCollections(cachedCollections);
+    } catch (err) {
+        console.error('Failed to load local skin datasets:', err);
+    }
+}
+
+// Render Collections List (using DocumentFragment batch DOM update)
+function renderCollectionsList(collections) {
+    const listEl = document.getElementById('collection-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    const fragment = document.createDocumentFragment();
+
+    collections.forEach(col => {
+        const card = document.createElement('div');
+        card.className = 'collection-card';
+        card.setAttribute('data-id', col.id);
+
+        const count = col.contains ? col.contains.length : 0;
+        const imgUrl = col.image || '';
+
+        card.innerHTML = `
+            <div class="collection-icon">
+                <img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(col.name)}" loading="lazy" decoding="async" onError="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';">
+                <span style="display:none;">📁</span>
+            </div>
+            <div class="collection-info">
+                <h3>${escapeHtml(col.name)}</h3>
+                <p>${count} Skins • Tap to view</p>
+            </div>
+        `;
+
+        card.addEventListener('click', () => toggleCollection(col.id));
+        fragment.appendChild(card);
+    });
+
+    listEl.appendChild(fragment);
+}
+
+// Render Cases List (using DocumentFragment batch DOM update)
+function renderCasesList(cases) {
+    const listEl = document.getElementById('cases-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    const fragment = document.createDocumentFragment();
+
+    cases.forEach(caseItem => {
+        const card = document.createElement('div');
+        card.className = 'collection-card case-card';
+        card.setAttribute('data-id', caseItem.id);
+
+        const count = caseItem.contains ? caseItem.contains.length : 0;
+        const imgUrl = caseItem.image || '';
+
+        card.innerHTML = `
+            <div class="collection-icon case-icon">
+                <img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(caseItem.name)}" loading="lazy" decoding="async" onError="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';">
+                <span style="display:none;">📦</span>
+            </div>
+            <div class="collection-info">
+                <h3>${escapeHtml(caseItem.name)}</h3>
+                <p>${count} Items • Tap to view</p>
+            </div>
+        `;
+
+        card.addEventListener('click', () => toggleCase(caseItem.id));
+        fragment.appendChild(card);
+    });
+
+    listEl.appendChild(fragment);
+}
+
+// Render Weekly Drops List (using DocumentFragment batch DOM update)
+function renderWeeklyDropsList(drops) {
+    const listEl = document.getElementById('weekly-drops-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    const fragment = document.createDocumentFragment();
+
+    drops.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'collection-card case-card';
+        card.setAttribute('data-id', item.id);
+
+        const count = item.contains ? item.contains.length : 0;
+        const imgUrl = item.image || '';
+
+        card.innerHTML = `
+            <div class="collection-icon case-icon">
+                <img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(item.name)}" loading="lazy" decoding="async" onError="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';">
+                <span style="display:none;">📦</span>
+            </div>
+            <div class="collection-info">
+                <h3>${escapeHtml(item.name)}</h3>
+                <p>${count} Items • Tap to view</p>
+            </div>
+        `;
+
+        card.addEventListener('click', () => toggleWeeklyDrop(item.id));
+        fragment.appendChild(card);
+    });
+
+    listEl.appendChild(fragment);
+}
+
+// Render Limited Edition Tab (Shows collection card)
+function renderLimitedEdition(limitedCol) {
+    const listEl = document.getElementById('limited-edition-list');
+    if (!listEl || !limitedCol) return;
+    listEl.innerHTML = '';
+
+    const card = document.createElement('div');
+    card.className = 'collection-card';
+    card.setAttribute('data-id', limitedCol.id);
+
+    const count = limitedCol.contains ? limitedCol.contains.length : 4;
+    const imgUrl = limitedCol.image || '';
+
+    card.innerHTML = `
+        <div class="collection-icon">
+            <img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(limitedCol.name)}" loading="lazy" decoding="async" onError="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';">
+            <span style="display:none;">📁</span>
+        </div>
+        <div class="collection-info">
+            <h3>${escapeHtml(limitedCol.name)}</h3>
+            <p>${count} Skins • Non-Trade-up</p>
+        </div>
+    `;
+
+    card.addEventListener('click', () => toggleLimitedEdition(limitedCol.id));
+    listEl.appendChild(card);
 }
 
 // Event Listeners
@@ -375,21 +634,7 @@ function setupEventListeners() {
         });
     });
 
-    // Collection click event
-    if (harlequinCard) {
-        harlequinCard.addEventListener('click', () => {
-            toggleCollection('harlequin');
-        });
-    }
-
-    // Case click event
-    if (dreamsCard) {
-        dreamsCard.addEventListener('click', () => {
-            toggleCase('dreams-nightmares');
-        });
-    }
-
-    // Close Modal Events
+    // Close Skin Modal Events
     if (closeModalBtn) {
         closeModalBtn.addEventListener('click', closeModal);
     }
@@ -399,6 +644,43 @@ function setupEventListeners() {
             if (e.target === skinModal) closeModal();
         });
     }
+
+    // Close Container Overlay Modal Events
+    if (closeContainerModalBtn) {
+        closeContainerModalBtn.addEventListener('click', closeContainerModal);
+    }
+
+    if (containerModal) {
+        containerModal.addEventListener('click', (e) => {
+            if (e.target === containerModal || e.target.classList.contains('container-modal-backdrop')) {
+                closeContainerModal();
+            }
+        });
+    }
+
+    // Allow uninhibited mouse wheel scrolling inside modals without interference from global window listeners
+    if (containerModal) {
+        containerModal.addEventListener('wheel', (e) => {
+            e.stopPropagation();
+        }, { passive: true });
+    }
+
+    if (skinModal) {
+        skinModal.addEventListener('wheel', (e) => {
+            e.stopPropagation();
+        }, { passive: true });
+    }
+
+    // Escape Key Handler for Modals
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' || e.key === 'Esc') {
+            if (skinModal && !skinModal.classList.contains('hidden')) {
+                closeModal();
+            } else if (containerModal && !containerModal.classList.contains('hidden')) {
+                closeContainerModal();
+            }
+        }
+    });
 
     // Filter Buttons
     if (btnFilter) {
@@ -417,7 +699,7 @@ function setupEventListeners() {
         });
     });
 
-    // Sub-nav Tabs (Collections / Cases)
+    // Sub-nav Tabs (Collections / Cases / Weekly Drops / Limited Edition)
     document.querySelectorAll('.sub-tab').forEach(tab => {
         tab.addEventListener('click', () => {
             const subtab = tab.getAttribute('data-subtab');
@@ -426,7 +708,7 @@ function setupEventListeners() {
     });
 }
 
-// Switch Sub-Tab (Collections / Cases)
+// Switch Sub-Tab (Collections / Cases / Weekly Drops / Limited Edition)
 function switchSubTab(subtab) {
     document.querySelectorAll('.sub-tab').forEach(tab => {
         if (tab.getAttribute('data-subtab') === subtab) {
@@ -436,33 +718,28 @@ function switchSubTab(subtab) {
         }
     });
 
-    const collectionsTabContent = document.getElementById('collections-tab-content');
-    const casesTabContent = document.getElementById('cases-tab-content');
-    const harlequinCardEl = harlequinCard || document.getElementById('harlequin-card');
-    const dreamsCardEl = dreamsCard || document.getElementById('dreams-card');
-    const skinsContainerEl = skinsContainer || document.getElementById('skins-container');
-    const caseSkinsContainerEl = caseSkinsContainer || document.getElementById('case-skins-container');
+    const tabContents = {
+        'collections': document.getElementById('collections-tab-content'),
+        'cases': document.getElementById('cases-tab-content'),
+        'weekly-drops': document.getElementById('weekly-drops-tab-content'),
+        'limited-edition': document.getElementById('limited-edition-tab-content')
+    };
 
-    if (subtab === 'collections') {
-        if (collectionsTabContent) collectionsTabContent.classList.remove('hidden');
-        if (casesTabContent) casesTabContent.classList.add('hidden');
-        // Reset case active
-        activeCase = null;
-        if (dreamsCardEl) dreamsCardEl.classList.remove('active');
-        if (caseSkinsContainerEl) {
-            caseSkinsContainerEl.classList.remove('expanded');
-            caseSkinsContainerEl.classList.add('hidden');
+    // Show selected tab, hide all others
+    for (const key in tabContents) {
+        if (tabContents[key]) {
+            if (key === subtab) {
+                tabContents[key].classList.remove('hidden');
+            } else {
+                tabContents[key].classList.add('hidden');
+            }
         }
-    } else if (subtab === 'cases') {
-        if (collectionsTabContent) collectionsTabContent.classList.add('hidden');
-        if (casesTabContent) casesTabContent.classList.remove('hidden');
-        // Reset collection active
-        activeCollection = null;
-        if (harlequinCardEl) harlequinCardEl.classList.remove('active');
-        if (skinsContainerEl) {
-            skinsContainerEl.classList.remove('expanded');
-            skinsContainerEl.classList.add('hidden');
-        }
+    }
+
+    // Re-apply search filter for newly activated tab
+    const searchInput = document.getElementById('collections-search-input');
+    if (searchInput && searchInput.value.trim() !== '') {
+        filterCollectionsAndCases(searchInput.value.trim().toLowerCase());
     }
 }
 
@@ -510,42 +787,48 @@ function setupSearchLogic() {
 }
 
 function filterCollectionsAndCases(query) {
-    const collectionList = document.getElementById('collection-list');
-    if (!collectionList) return;
+    const lists = [
+        document.getElementById('collection-list'),
+        document.getElementById('cases-list'),
+        document.getElementById('weekly-drops-list'),
+        document.getElementById('limited-edition-list')
+    ].filter(Boolean);
 
-    const cards = collectionList.querySelectorAll('.collection-card');
-    let visibleCount = 0;
+    lists.forEach(list => {
+        const cards = list.querySelectorAll('.collection-card');
+        let visibleCount = 0;
 
-    cards.forEach(card => {
-        const titleEl = card.querySelector('h3');
-        const titleText = titleEl ? titleEl.textContent.toLowerCase() : '';
+        cards.forEach(card => {
+            const titleEl = card.querySelector('h3');
+            const titleText = titleEl ? titleEl.textContent.toLowerCase() : '';
 
-        if (query === '' || titleText.includes(query)) {
-            card.classList.remove('hidden');
-            visibleCount++;
-        } else {
-            card.classList.add('hidden');
+            if (query === '' || titleText.includes(query)) {
+                card.classList.remove('hidden');
+                visibleCount++;
+            } else {
+                card.classList.add('hidden');
+            }
+        });
+
+        // Display empty search result notice if no items match query
+        let noticeEl = list.querySelector('.empty-search-notice');
+        if (visibleCount === 0 && query !== '') {
+            if (!noticeEl) {
+                noticeEl = document.createElement('div');
+                noticeEl.className = 'empty-search-notice';
+                noticeEl.innerHTML = `
+                    <div class="search-icon-dim">🔍</div>
+                    <p><strong>"${escapeHtml(query)}"</strong> ile eşleşen sonuç bulunamadı.</p>
+                `;
+                list.appendChild(noticeEl);
+            } else {
+                noticeEl.querySelector('p').innerHTML = `<strong>"${escapeHtml(query)}"</strong> ile eşleşen sonuç bulunamadı.`;
+                noticeEl.classList.remove('hidden');
+            }
+        } else if (noticeEl) {
+            noticeEl.classList.add('hidden');
         }
     });
-
-    // Display empty search result notice if no items match query
-    let noticeEl = collectionList.querySelector('.empty-search-notice');
-    if (visibleCount === 0 && query !== '') {
-        if (!noticeEl) {
-            noticeEl = document.createElement('div');
-            noticeEl.className = 'empty-search-notice';
-            noticeEl.innerHTML = `
-                <div class="search-icon-dim">🔍</div>
-                <p><strong>"${query}"</strong> ile eşleşen koleksiyon veya kasa bulunamadı.</p>
-            `;
-            collectionList.appendChild(noticeEl);
-        } else {
-            noticeEl.querySelector('p').innerHTML = `<strong>"${query}"</strong> ile eşleşen koleksiyon veya kasa bulunamadı.`;
-            noticeEl.classList.remove('hidden');
-        }
-    } else if (noticeEl) {
-        noticeEl.classList.add('hidden');
-    }
 }
 
 // Set Wear Mode (Normal / StatTrak) for Modal
@@ -605,98 +888,125 @@ function updateActiveNavOnSection(sectionId) {
     });
 }
 
-// Toggle Collection Skins View (Smooth Single-Item Accordion)
-function toggleCollection(collectionId) {
-    const harlequinCardEl = harlequinCard || document.getElementById('harlequin-card');
-    const skinsContainerEl = skinsContainer || document.getElementById('skins-container');
-    const skinsListEl = skinsList || document.getElementById('skins-list');
-    const dreamsCardEl = dreamsCard || document.getElementById('dreams-card');
-    const caseSkinsContainerEl = caseSkinsContainer || document.getElementById('case-skins-container');
+// Open Container Modal (Overlay View for Cases / Collections / Weekly Drops / Limited Edition)
+function openContainerModal(containerItem, containerType = 'Collection') {
+    if (!containerItem || !containerModal) return;
 
-    // Collapse case if open
-    if (activeCase) {
-        activeCase = null;
-        if (dreamsCardEl) dreamsCardEl.classList.remove('active');
-        if (caseSkinsContainerEl) {
-            caseSkinsContainerEl.classList.remove('expanded');
-            setTimeout(() => {
-                if (!activeCase) caseSkinsContainerEl.classList.add('hidden');
-            }, 350);
+    activeContainerItem = containerItem;
+    isContainerModalOpen = true;
+
+    // Fixed Header Elements
+    const titleEl = document.getElementById('container-modal-title');
+    const countEl = document.getElementById('container-modal-count');
+    const typeEl = document.getElementById('container-modal-type');
+    const iconImg = document.getElementById('container-modal-icon-img');
+    const modalBody = document.getElementById('container-modal-body');
+    const skinsListEl = document.getElementById('container-skins-list');
+
+    if (titleEl) {
+        titleEl.textContent = containerItem.name || 'Container';
+    }
+
+    const uniqueContains = deduplicateItemsByName(containerItem.contains || []);
+    const uniqueRare = deduplicateItemsByName(containerItem.contains_rare || []);
+
+    const regCount = uniqueContains.length;
+    const rareCount = uniqueRare.length;
+    
+    let countText = `${regCount} Skins`;
+    if (rareCount > 0) {
+        countText = `${regCount} Skins + Rare Special Items`;
+    }
+    if (countEl) {
+        countEl.textContent = countText;
+    }
+
+    if (typeEl) {
+        typeEl.textContent = containerType;
+        typeEl.setAttribute('data-type', containerType.toLowerCase().replace(/\s+/g, '-'));
+    }
+
+    if (iconImg) {
+        if (containerItem.image) {
+            iconImg.src = containerItem.image;
+            iconImg.alt = containerItem.name || '';
+            iconImg.style.display = 'block';
+        } else {
+            iconImg.style.display = 'none';
         }
     }
 
-    if (activeCollection === collectionId) {
-        // Toggle collapse
-        activeCollection = null;
-        if (harlequinCardEl) harlequinCardEl.classList.remove('active');
-        if (skinsContainerEl) {
-            skinsContainerEl.classList.remove('expanded');
-            setTimeout(() => {
-                if (!activeCollection) skinsContainerEl.classList.add('hidden');
-            }, 350);
+    // Highlight active card in grid
+    document.querySelectorAll('.collection-card').forEach(card => {
+        if (card.getAttribute('data-id') === containerItem.id) {
+            card.classList.add('active');
+        } else {
+            card.classList.remove('active');
         }
-    } else {
-        // Expand
-        activeCollection = collectionId;
-        if (harlequinCardEl) harlequinCardEl.classList.add('active');
-        renderSkins(harlequinSkins, skinsListEl);
-        if (skinsContainerEl) {
-            skinsContainerEl.classList.remove('hidden');
-            requestAnimationFrame(() => {
-                skinsContainerEl.classList.add('expanded');
-            });
-            if (lenis && harlequinCardEl) {
-                lenis.scrollTo(harlequinCardEl, { offset: -90, duration: 0.8 });
-            }
-        }
+    });
+
+    // Render skins inside the modal list
+    renderSkinsDetailedView(uniqueContains, uniqueRare, skinsListEl);
+
+    // Reset internal modal scroll position to top
+    if (modalBody) {
+        modalBody.scrollTop = 0;
     }
+
+    // Prevent background scrolling strictly via overflow hidden
+    document.body.style.overflow = 'hidden';
+
+    // Show overlay modal
+    containerModal.classList.remove('hidden');
+    containerModal.setAttribute('aria-hidden', 'false');
 }
 
-// Toggle Case Skins View (Smooth Single-Item Accordion)
+// Close Container Modal
+function closeContainerModal() {
+    if (!containerModal) return;
+
+    containerModal.classList.add('hidden');
+    containerModal.setAttribute('aria-hidden', 'true');
+    isContainerModalOpen = false;
+    activeContainerItem = null;
+
+    // Remove active highlight on collection cards
+    document.querySelectorAll('.collection-card').forEach(card => {
+        card.classList.remove('active');
+    });
+
+    // If single skin modal was open, close it too
+    if (skinModal && !skinModal.classList.contains('hidden')) {
+        skinModal.classList.add('hidden');
+        currentModalSkin = null;
+    }
+
+    // Restore background scrolling and exact scroll position
+    document.body.style.overflow = '';
+}
+
+function toggleCollection(collectionId) {
+    const col = cachedCollections.find(c => c.id === collectionId);
+    if (!col) return;
+    openContainerModal(col, 'Collection');
+}
+
 function toggleCase(caseId) {
-    const dreamsCardEl = dreamsCard || document.getElementById('dreams-card');
-    const caseSkinsContainerEl = caseSkinsContainer || document.getElementById('case-skins-container');
-    const caseSkinsListEl = caseSkinsList || document.getElementById('case-skins-list');
-    const harlequinCardEl = harlequinCard || document.getElementById('harlequin-card');
-    const skinsContainerEl = skinsContainer || document.getElementById('skins-container');
+    const caseItem = cachedCases.find(c => c.id === caseId);
+    if (!caseItem) return;
+    openContainerModal(caseItem, 'Case');
+}
 
-    // Collapse collection if open
-    if (activeCollection) {
-        activeCollection = null;
-        if (harlequinCardEl) harlequinCardEl.classList.remove('active');
-        if (skinsContainerEl) {
-            skinsContainerEl.classList.remove('expanded');
-            setTimeout(() => {
-                if (!activeCollection) skinsContainerEl.classList.add('hidden');
-            }, 350);
-        }
-    }
+function toggleWeeklyDrop(containerId) {
+    const item = cachedWeeklyDrops.find(c => c.id === containerId);
+    if (!item) return;
+    openContainerModal(item, 'Weekly Drop');
+}
 
-    if (activeCase === caseId) {
-        // Toggle collapse
-        activeCase = null;
-        if (dreamsCardEl) dreamsCardEl.classList.remove('active');
-        if (caseSkinsContainerEl) {
-            caseSkinsContainerEl.classList.remove('expanded');
-            setTimeout(() => {
-                if (!activeCase) caseSkinsContainerEl.classList.add('hidden');
-            }, 350);
-        }
-    } else {
-        // Expand
-        activeCase = caseId;
-        if (dreamsCardEl) dreamsCardEl.classList.add('active');
-        renderSkins(dreamsNightmaresSkins, caseSkinsListEl);
-        if (caseSkinsContainerEl) {
-            caseSkinsContainerEl.classList.remove('hidden');
-            requestAnimationFrame(() => {
-                caseSkinsContainerEl.classList.add('expanded');
-            });
-            if (lenis && dreamsCardEl) {
-                lenis.scrollTo(dreamsCardEl, { offset: -90, duration: 0.8 });
-            }
-        }
-    }
+function toggleLimitedEdition(collectionId) {
+    const col = cachedLimitedEdition;
+    if (!col) return;
+    openContainerModal(col, 'Limited Edition');
 }
 
 // Rarity Order Weights (Higher = More Rare)
@@ -737,83 +1047,58 @@ function isKnifeOrGlove(skin) {
     return false;
 }
 
-// Render Skin Cards Grid (Sorted by Rarity: Most Rare at Top, Least Rare at Bottom)
-function renderSkins(skins, targetContainer = skinsList) {
+// Render Detailed View for Selected Item (Single batch append with DocumentFragment)
+function renderSkinsDetailedView(contains, contains_rare, targetContainer) {
     if (!targetContainer) return;
     targetContainer.innerHTML = '';
 
-    if (!skins || skins.length === 0) {
+    // Deduplicate items strictly by base name to ensure each skin appears strictly ONCE
+    const uniqueRare = deduplicateItemsByName(contains_rare);
+    const uniqueRegular = deduplicateItemsByName(contains);
+
+    const hasRare = uniqueRare.length > 0;
+    const hasRegular = uniqueRegular.length > 0;
+
+    if (!hasRare && !hasRegular) {
         targetContainer.innerHTML = '<p class="no-skins">Bu grupta skin bulunamadı.</p>';
         return;
     }
 
-    // Separate knives/gloves from regular skins
-    const knifeSkins = skins.filter(s => isKnifeOrGlove(s));
-    const regularSkins = skins.filter(s => !isKnifeOrGlove(s));
+    const fragment = document.createDocumentFragment();
 
-    // Sort regular skins by rarity weight descending (en ender en üstte, en yaygın en altta)
-    regularSkins.sort((a, b) => {
-        const weightA = getSkinRarityWeight(a);
-        const weightB = getSkinRarityWeight(b);
-        if (weightB !== weightA) {
-            return weightB - weightA;
-        }
-        return a.name.localeCompare(b.name);
-    });
+    // 1. If contains_rare exists and has items: Render Gold Banner
+    if (hasRare) {
+        const goldSection = document.createElement('div');
+        goldSection.className = 'gold-rarity-section';
 
-    // 1. Render Single Gold Rarity Card at the top of the collection
-    const goldSection = document.createElement('div');
-    goldSection.className = 'gold-rarity-section';
+        const uniqueId = 'rare-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
 
-    const hasKnives = knifeSkins.length > 0;
-    
-    // Use a unique ID so we can find elements reliably
-    const uniqueId = 'knives-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
-    
-    const goldCard = document.createElement('div');
-    goldCard.className = `skin-card gold-special-card ${hasKnives ? 'has-items' : 'empty-gold-card'}`;
-    goldCard.setAttribute('data-knives-target', uniqueId);
+        const goldCard = document.createElement('div');
+        goldCard.className = 'skin-card gold-special-card has-items';
+        goldCard.setAttribute('data-knives-target', uniqueId);
 
-    goldCard.innerHTML = `
-        <div class="rarity-bar gold-bar"></div>
-        <div class="skin-image-wrapper">
-            <div class="gold-star-emblem ${hasKnives ? '' : 'dim-star'}">★</div>
-        </div>
-        <div class="skin-weapon" style="color: #ffd700; font-weight: 700;">★ RARE SPECIAL ITEM</div>
-        <div class="skin-name" style="color: ${hasKnives ? '#ffd700' : 'var(--text-muted)'};">
-            Bıçaklar & Eldivenler
-        </div>
-        <div class="skin-rarity-tag gold-rarity-tag ${hasKnives ? '' : 'empty-gold-tag'}">
-            ★ GOLD (${knifeSkins.length} EŞYA) ${hasKnives ? '<span class="expand-arrow">▼ Bıçakları Göster</span>' : ''}
-        </div>
-    `;
+        goldCard.innerHTML = `
+            <div class="rarity-bar gold-bar"></div>
+            <div class="skin-image-wrapper">
+                <div class="gold-star-emblem">★</div>
+            </div>
+            <div class="skin-weapon" style="color: #ffd700; font-weight: 700;">★ RARE SPECIAL ITEM</div>
+            <div class="skin-name" style="color: #ffd700;">
+                Knives &amp; Gloves
+            </div>
+            <div class="skin-rarity-tag gold-rarity-tag">
+                ★ GOLD (${uniqueRare.length} ITEMS) <span class="expand-arrow">▼ Eşyaları Göster</span>
+            </div>
+        `;
 
-    if (hasKnives) {
         const knivesGrid = document.createElement('div');
         knivesGrid.className = 'knives-subgrid hidden';
         knivesGrid.id = uniqueId;
 
-        // Phase display order priority
-        const phasePriority = {
-            'Emerald': 1,
-            'Ruby': 2,
-            'Sapphire': 3,
-            'Black Pearl': 4,
-            'Phase 1': 5,
-            'Phase 2': 6,
-            'Phase 3': 7,
-            'Phase 4': 8
-        };
-
-        // Render knife items inside subgrid sorted by name and phase
-        knifeSkins.sort((a, b) => {
-            const nameCmp = a.name.localeCompare(b.name);
-            if (nameCmp !== 0) return nameCmp;
-            const pA = a.phase ? (phasePriority[a.phase] || 50) : 99;
-            const pB = b.phase ? (phasePriority[b.phase] || 50) : 99;
-            return pA - pB;
-        }).forEach(skin => {
-            const knifeCard = createSkinCard(skin);
+        // Sort rare items alphabetically by name
+        const sortedRare = [...uniqueRare].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        sortedRare.forEach(rareSkin => {
+            const knifeCard = createSkinCard(rareSkin);
             knivesGrid.appendChild(knifeCard);
         });
 
@@ -822,87 +1107,124 @@ function renderSkins(skins, targetContainer = skinsList) {
             e.preventDefault();
             const gridEl = document.getElementById(uniqueId);
             if (!gridEl) return;
-            
+
             const isHidden = gridEl.classList.contains('hidden');
             const arrowEl = this.querySelector('.expand-arrow');
             if (isHidden) {
                 gridEl.classList.remove('hidden');
                 this.classList.add('expanded');
-                if (arrowEl) arrowEl.textContent = '▲ Bıçakları Gizle';
+                if (arrowEl) arrowEl.textContent = '▲ Eşyaları Gizle';
                 setTimeout(() => {
                     gridEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 }, 50);
             } else {
                 gridEl.classList.add('hidden');
                 this.classList.remove('expanded');
-                if (arrowEl) arrowEl.textContent = '▼ Bıçakları Göster';
+                if (arrowEl) arrowEl.textContent = '▼ Eşyaları Göster';
             }
         });
 
         goldSection.appendChild(goldCard);
         goldSection.appendChild(knivesGrid);
-    } else {
-        // Empty gold card (0 EŞYA): clicking does NOT open/expand any subgrid
-        goldCard.style.cursor = 'default';
-        goldSection.appendChild(goldCard);
+        fragment.appendChild(goldSection);
     }
 
-    targetContainer.appendChild(goldSection);
+    // 2. Regular skins sorted by rarity descending (Covert -> Consumer), then by name
+    if (hasRegular) {
+        const sortedSkins = [...uniqueRegular].sort((a, b) => {
+            const weightA = getSkinRarityWeight(a);
+            const weightB = getSkinRarityWeight(b);
+            if (weightB !== weightA) {
+                return weightB - weightA;
+            }
+            return (a.name || '').localeCompare(b.name || '');
+        });
 
-    // 2. Render regular skins in sorted order (most rare to least rare)
-    regularSkins.forEach(skin => {
-        const card = createSkinCard(skin);
-        targetContainer.appendChild(card);
-    });
+        sortedSkins.forEach(skin => {
+            const card = createSkinCard(skin);
+            fragment.appendChild(card);
+        });
+    }
+
+    // Batch append to target container
+    targetContainer.appendChild(fragment);
 }
 
+// Create Skin Card Component
 function createSkinCard(skin) {
-    const rarityColor = skin.rarity ? skin.rarity.color : '#b0c3d9';
-    const rarityName = skin.rarity ? skin.rarity.name : 'Unknown';
-    const weaponName = skin.weapon ? skin.weapon.name : '';
+    const rarityColor = skin.rarity && skin.rarity.color ? skin.rarity.color : '#b0c3d9';
+    const rarityName = skin.rarity && skin.rarity.name ? skin.rarity.name : 'Consumer Grade';
 
-    // Handle clean display name without redundant weapon name
-    let cleanSkinName = skin.name;
-    if (weaponName && cleanSkinName.startsWith(weaponName + ' | ')) {
+    // Base name directly from JSON
+    const baseName = skin.name || 'Unknown Skin';
+
+    // Trade-up eligibility flag
+    const canTradeUp = skin.can_trade_up !== false && skin.is_trade_up_eligible !== false;
+
+    // Parse weapon and display title cleanly
+    let weaponName = skin.weapon ? skin.weapon.name : '';
+    let cleanSkinName = baseName;
+
+    if (!weaponName && baseName.includes(' | ')) {
+        const parts = baseName.split(' | ');
+        weaponName = parts[0];
+        cleanSkinName = parts[1];
+    } else if (weaponName && cleanSkinName.startsWith(weaponName + ' | ')) {
         cleanSkinName = cleanSkinName.replace(weaponName + ' | ', '');
     } else if (weaponName && cleanSkinName.startsWith('★ ' + weaponName + ' | ')) {
-        cleanSkinName = '★ ' + cleanSkinName.replace('★ ' + weaponName + ' | ', '');
-    } else if (cleanSkinName.includes(' | ')) {
-        const parts = cleanSkinName.split(' | ');
-        cleanSkinName = (skin.name.startsWith('★') ? '★ ' : '') + parts[1];
+        cleanSkinName = cleanSkinName.replace('★ ' + weaponName + ' | ', '');
+    } else if (!weaponName && baseName.startsWith('★')) {
+        weaponName = '★ Knife / Glove';
     }
-
-    const phase = skin.phase;
-    const phaseClass = phase ? `phase-${phase.toLowerCase().replace(/\s+/g, '-')}` : '';
-    const phaseBadgeHtml = phase ? `<span class="skin-phase-badge ${phaseClass}">${phase}</span>` : '';
 
     const card = document.createElement('div');
     card.className = 'skin-card';
+    card.setAttribute('data-market-hash-name', baseName);
+    card.setAttribute('data-can-trade-up', canTradeUp ? 'true' : 'false');
+
+    // Apply skin.rarity.color dynamically to borders and hover glows
+    card.style.borderColor = `${rarityColor}40`;
+    card.addEventListener('mouseenter', () => {
+        card.style.borderColor = rarityColor;
+        card.style.boxShadow = `0 14px 28px rgba(0, 0, 0, 0.55), 0 0 20px ${rarityColor}45`;
+    });
+    card.addEventListener('mouseleave', () => {
+        card.style.borderColor = `${rarityColor}40`;
+        card.style.boxShadow = '';
+    });
+
+    const nonTradeUpBadge = !canTradeUp ? `<div style="font-size: 0.65rem; color: #fb7185; background: rgba(251, 113, 133, 0.15); border: 1px solid rgba(251, 113, 133, 0.35); padding: 0.12rem 0.45rem; border-radius: 4px; margin-top: 0.25rem; font-weight: 700; letter-spacing: 0.04em;">NON-TRADEUP</div>` : '';
+
     card.innerHTML = `
         <div class="rarity-bar" style="background-color: ${rarityColor}"></div>
         <div class="skin-image-wrapper">
-            <img src="${skin.image}" alt="${skin.name}" loading="lazy" onError="this.src='https://via.placeholder.com/150/111726/ffffff?text=CS2+Skin'">
+            <img src="${escapeHtml(skin.image)}" alt="${escapeHtml(baseName)}" loading="lazy" decoding="async" onError="this.src='https://via.placeholder.com/150/111726/ffffff?text=CS2+Skin'">
         </div>
-        <div class="skin-weapon">${weaponName}</div>
-        <div class="skin-name" title="${skin.name}${phase ? ' (' + phase + ')' : ''}">
-            <span class="skin-base-title">${cleanSkinName}</span>
-            ${phaseBadgeHtml}
+        <div class="skin-weapon">${escapeHtml(weaponName)}</div>
+        <div class="skin-name" title="${escapeHtml(baseName)}">
+            <span class="skin-base-title">${escapeHtml(cleanSkinName)}</span>
         </div>
-        <div class="skin-rarity-tag" style="color: ${rarityColor}; background: ${rarityColor}18; border: 1px solid ${rarityColor}40">
-            ${rarityName}
+        ${nonTradeUpBadge}
+        <div class="skin-price">$ --</div>
+        <div class="skin-rarity-tag" style="color: ${rarityColor}; background: ${rarityColor}18; border: 1px solid ${rarityColor}40; box-shadow: 0 0 8px ${rarityColor}20;">
+            ${escapeHtml(rarityName)}
         </div>
     `;
 
-    card.addEventListener('click', () => openSkinModal(skin));
+    card.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openSkinModal(skin);
+    });
+
     return card;
 }
 
 // Open Skin Modal (Bilgi Balonu) with Dynamic Rarity Theming
 function openSkinModal(skin) {
-    if (lenis) lenis.stop();
+    document.body.style.overflow = 'hidden';
     currentModalSkin = skin;
     activeWearMode = 'normal';
-    
+
     // Reset wear tabs UI
     document.querySelectorAll('.wear-tab').forEach(tab => {
         if (tab.getAttribute('data-wear-mode') === 'normal') {
@@ -912,41 +1234,26 @@ function openSkinModal(skin) {
         }
     });
 
-    const weaponName = skin.weapon ? skin.weapon.name : '';
-    const skinTitle = skin.name ? skin.name : 'Unknown Skin';
-    const rarityName = skin.rarity ? skin.rarity.name : 'Consumer Grade';
-    const rarityColor = skin.rarity ? skin.rarity.color : '#b0c3d9';
+    const baseName = skin.name || 'Unknown Skin';
+    let weaponName = skin.weapon ? skin.weapon.name : '';
+    if (!weaponName && baseName.includes(' | ')) {
+        weaponName = baseName.split(' | ')[0];
+    } else if (!weaponName && baseName.startsWith('★')) {
+        weaponName = '★ Knife / Glove';
+    }
+
+    const rarityName = skin.rarity && skin.rarity.name ? skin.rarity.name : 'Consumer Grade';
+    const rarityColor = skin.rarity && skin.rarity.color ? skin.rarity.color : '#b0c3d9';
 
     const minFloatVal = skin.min_float !== null && skin.min_float !== undefined ? skin.min_float : 0.00;
     const maxFloatVal = skin.max_float !== null && skin.max_float !== undefined ? skin.max_float : 1.00;
 
-    const phase = skin.phase;
-    const phaseClass = phase ? `phase-${phase.toLowerCase().replace(/\s+/g, '-')}` : '';
-    
-    if (phase) {
-        modalSkinName.innerHTML = `${skinTitle} <span class="modal-phase-pill ${phaseClass}">${phase}</span>`;
-    } else {
-        modalSkinName.textContent = skinTitle;
-    }
-
-    modalWeapon.textContent = weaponName;
-
-    // Phase / Variant Row in Modal Details
-    const modalPhaseRow = document.getElementById('modal-phase-row');
-    const modalPhase = document.getElementById('modal-phase');
-    if (modalPhaseRow && modalPhase) {
-        if (phase) {
-            modalPhase.textContent = phase;
-            modalPhase.className = `phase-badge ${phaseClass}`;
-            modalPhaseRow.classList.remove('hidden');
-        } else {
-            modalPhaseRow.classList.add('hidden');
-        }
-    }
+    // Display base name strictly without phase variants or pills
+    modalSkinName.textContent = baseName;
 
     // Apply Dynamic Rarity Color Theme to Backdrop and Modal
     skinModal.style.background = `radial-gradient(circle at center, ${rarityColor}35 0%, rgba(5, 7, 13, 0.88) 75%)`;
-    
+
     const modalContent = skinModal.querySelector('.modal-content');
     if (modalContent) {
         modalContent.style.borderColor = `${rarityColor}70`;
@@ -955,22 +1262,32 @@ function openSkinModal(skin) {
 
     if (modalImageContainer) {
         modalImageContainer.style.background = `radial-gradient(circle at center, ${rarityColor}30 0%, transparent 75%)`;
+        modalImageContainer.innerHTML = `<img src="${escapeHtml(skin.image)}" alt="${escapeHtml(baseName)}" loading="lazy" decoding="async">`;
     }
 
-    // Rarity with Pill and Glow
-    modalRarity.innerHTML = `<span class="rarity-pill" style="background-color: ${rarityColor}; box-shadow: 0 0 12px ${rarityColor}60;">${rarityName}</span>`;
-    modalFloat.textContent = `${minFloatVal.toFixed(2)} – ${maxFloatVal.toFixed(2)}`;
+    // Trade-up eligibility display in modal
+    const canTradeUp = skin.can_trade_up !== false && skin.is_trade_up_eligible !== false;
+    const tradeUpStatusHtml = canTradeUp 
+        ? `<span style="color: #4ade80; font-weight: 700;">Eligible</span>` 
+        : `<span style="color: #fb7185; font-weight: 700;">Not Eligible (Limited Edition)</span>`;
 
-    // Modal Image
-    modalImageContainer.innerHTML = `<img src="${skin.image}" alt="${skinTitle}">`;
+    const modalDetailsEl = skinModal.querySelector('.modal-details');
+    if (modalDetailsEl) {
+        modalDetailsEl.innerHTML = `
+            <p><strong>Weapon:</strong> <span id="modal-weapon">${escapeHtml(weaponName)}</span></p>
+            <p><strong>Rarity:</strong> <span id="modal-rarity"><span class="rarity-pill" style="background-color: ${rarityColor}; box-shadow: 0 0 12px ${rarityColor}60;">${escapeHtml(rarityName)}</span></span></p>
+            <p><strong>Float Aralığı:</strong> <span id="modal-float">${minFloatVal.toFixed(2)} – ${maxFloatVal.toFixed(2)}</span></p>
+            <p><strong>Trade-Up Status:</strong> ${tradeUpStatusHtml}</p>
+        `;
+    }
 
-    // Render Wear Conditions based on mode and clamped floats
+    // Render Wear Conditions with $ -- price placeholder
     renderWearConditions(skin, activeWearMode);
 
     skinModal.classList.remove('hidden');
 }
 
-// Render Wear Conditions with Float Range Clamping & Price Placeholder (Reference 2 Inspired)
+// Render Wear Conditions with Float Range Clamping & Price Placeholder
 function renderWearConditions(skin, mode) {
     if (!skin || !modalWearConditions) return;
 
@@ -993,7 +1310,7 @@ function renderWearConditions(skin, mode) {
         const effMin = Math.max(wear.min, skinMin);
         const effMax = Math.min(wear.max, skinMax);
 
-        // If condition does not exist for this skin float range, skip rendering completely!
+        // If condition does not exist for this skin float range, skip rendering completely
         if (effMax - effMin <= 0.0001) {
             return;
         }
@@ -1008,7 +1325,7 @@ function renderWearConditions(skin, mode) {
                     </div>
                 </div>
                 <div class="wear-right">
-                    <span class="wear-price">$</span>
+                    <span class="wear-price">$ --</span>
                 </div>
             </div>
         `);
@@ -1028,7 +1345,12 @@ function renderWearConditions(skin, mode) {
 // Close Skin Modal
 function closeModal() {
     skinModal.classList.add('hidden');
-    if (lenis) lenis.start();
+    currentModalSkin = null;
+
+    // Only restore body scrolling if container modal is NOT open
+    if (!isContainerModalOpen) {
+        document.body.style.overflow = '';
+    }
 }
 
 // Filter Action Handling
@@ -1070,112 +1392,13 @@ function handleFilterReset() {
     `;
 }
 
-// Fallback Data if network fails (Includes sample Knife item to verify Gold Card)
-function loadFallbackData() {
-    harlequinSkins = [
-        {
-            name: "★ Karambit | Gamma Doppler",
-            weapon: { name: "Karambit" },
-            category: { name: "Knives" },
-            rarity: { name: "Extraordinary", color: "#ffd700" },
-            min_float: 0.00,
-            max_float: 0.08,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIX14lY7q5F5k8d9yD24E-iW0oFf2M43x2T9kZ3W-0YhE6c29b-M504_S249339Z8ZpXqDUp7XoT9C29S4e3wz3y780W_3Z6z-F29D"
-        },
-        {
-            name: "AWP | Exothermic",
-            weapon: { name: "AWP" },
-            rarity: { name: "Restricted", color: "#8847ff" },
-            min_float: 0,
-            max_float: 0.7,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIz3UqlXOLrxM-vMGmW8VNxu5Dx60noTyLwiYbf9Tte0PSneqF6L-KYMXeR1e1-tfJWQyC0nQlp4W7Xzd-qcH_DO1N0W5FzQuEP5kW8ltfnM-q24wzYgt0RmC_7jSlL5jErvbgX7dER8Q"
-        },
-        {
-            name: "M4A1-S | Party Animal",
-            weapon: { name: "M4A1-S" },
-            rarity: { name: "Classified", color: "#d32ce6" },
-            min_float: 0,
-            max_float: 0.6,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGJKz2lu_XuWbwcuyMESA4Fdl-4nnpU7iQA3-kKnr8ytd6s29Y6FhJeScACnDkL8j6LU8GS3mwUh24G-Bno2tIymeblMgC5R3F-ECsBK6k4XuN-Lh-UWA3P3GyEv9"
-        }
-    ];
-
-    dreamsNightmaresSkins = [
-        {
-            name: "AK-47 | Nightwish",
-            weapon: { name: "AK-47" },
-            rarity: { name: "Covert", color: "#eb4b4b" },
-            min_float: 0.00,
-            max_float: 1.00,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIX04lP-0-L6r3q0H2XdVJx-5CV-03cWyblwG6b4Sse7P2neqD6A0-1oXedzM-KkfT_V230mRl91WeH1m4j0NWWUPwwsCsR6S_8F40W8k4PnNei_01fZ5H5yH5w"
-        },
-        {
-            name: "MP9 | Starlight Protector",
-            weapon: { name: "MP9" },
-            rarity: { name: "Covert", color: "#eb4b4b" },
-            min_float: 0.00,
-            max_float: 0.80,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGI71S-z3Vbvwx8-0H2XdVJx-5CV-03cWyblwG6b4ScW7OW3gqg6N9-2f22h8NqfkeznV2-omQVx7Wu-InImuJS2ZPAohAt9wS-cK5hbtksbmPL660wS_5X5xD-2n0jY"
-        },
-        {
-            name: "Dual Berettas | Melondrama",
-            weapon: { name: "Dual Berettas" },
-            rarity: { name: "Classified", color: "#d32ce6" },
-            min_float: 0.00,
-            max_float: 1.00,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGJK-2Fi5XeWfxNu0H2XdVJx-5CV-03cWyblwG6b4Ss-6PyLpqAG93-1mX-F9NeT_fjvTzChd6i8wWW2EmsuuP2qZPAggWsZyTOAK5BCxlNflM-mwsAGIiomSjC2k1nI-132d3eU"
-        },
-        {
-            name: "M4A1-S | Night Terror",
-            weapon: { name: "M4A1-S" },
-            rarity: { name: "Restricted", color: "#8847ff" },
-            min_float: 0.00,
-            max_float: 0.70,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIz-X-3_V-eTwdy0H2XdVJx-5CV-03cWyblwG6b4SsW-PW3vqw2O5--dXOd7NeD9bDTbWjlhWn1zXG3dmoL1NH-QOVN9CsRwFeIK7BLpk9fmN--wsQOM2opGzi-k-Gf_sH6lC-_n"
-        },
-        {
-            name: "USP-S | Ticket to Hell",
-            weapon: { name: "USP-S" },
-            rarity: { name: "Restricted", color: "#8847ff" },
-            min_float: 0.00,
-            max_float: 0.40,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGJKy3l-_X-XbxN-0H2XdVJx-5CV-03cWyblwG6b4S8a5OXLm-QWN2-2eF-V7NeT_eTvX2-olRlx_W-71mtmndCmVdQ99WZp1F-MCtEGwkd3jMei8s1fajNox3n7rgnkfvHw72H3n0Dk"
-        },
-        {
-            name: "★ Butterfly Knife | Gamma Doppler",
-            weapon: { name: "Butterfly Knife" },
-            category: { name: "Knives" },
-            rarity: { name: "Covert", color: "#eb4b4b" },
-            min_float: 0.00,
-            max_float: 0.08,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIGz3UqlXOLrxM-vMGmW8VNxu5Dx60noTyL6kJ_m-B1Z-ua6bbZrLOmsD2qvxONzouBlSxa-lA8lvziMgIr9HifOOV5kFJp2Ee9b4Rntm4GxY7_ntQHc2o1DmH6r3Hgcv3w4t-pXU6ZzrPHQjQnfcepq0dwfRJw"
-        },
-        {
-            name: "★ Falchion Knife | Lore",
-            weapon: { name: "Falchion Knife" },
-            category: { name: "Knives" },
-            rarity: { name: "Covert", color: "#eb4b4b" },
-            min_float: 0.00,
-            max_float: 0.65,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIGz3UqlXOLrxM-vMGmW8VNxu5Dx60noTyL6kJ_m-B1P7vG6YadsLM-QG1iY1OBio-xoQRa_mg8ijDGMnYftb3qfPQZyWJtyFuNe4BG5ktDuY-ritleIid1Hynir3H9KvH055btRV6s7uvqAU_ahZxI"
-        },
-        {
-            name: "★ Shadow Daggers | Autotronic",
-            weapon: { name: "Shadow Daggers" },
-            category: { name: "Knives" },
-            rarity: { name: "Covert", color: "#eb4b4b" },
-            min_float: 0.00,
-            max_float: 0.85,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIGz3UqlXOLrxM-vMGmW8VNxu5Dx60noTyL6kJ_m-B1L-uGmV6N-H-CGHW-vwPtiv_V7QCe6liIrujqNjsGrIH2fOFJxX5F1TeICsRe8x4ezY-vj7gHc2N9HxHir3HhK7Cds5L4AT-N7rU0zpOnr"
-        },
-        {
-            name: "★ Huntsman Knife | Freehand",
-            weapon: { name: "Huntsman Knife" },
-            category: { name: "Knives" },
-            rarity: { name: "Covert", color: "#eb4b4b" },
-            min_float: 0.00,
-            max_float: 0.48,
-            image: "https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIGz3UqlXOLrxM-vMGmW8VNxu5Dx60noTyL6kJ_m-B1P7vG6YadsLM-SA1idwPx9teVWWjmMzE0YvzSCkpu3cC-Wald2A5tyFu9esxDpktO2Nrzq4wzaiYlGzXmo3SxIuHw65bsLU71lpPPkJkZySA"
-        }
-    ];
+// Populate Trade Up Collections Filter Dropdown with All Local Collections
+function populateTradeUpCollections(collections) {
+    if (!filterCollection || !collections || collections.length === 0) return;
+    const currentVal = filterCollection.value;
+    filterCollection.innerHTML = '<option>All Collections</option>' +
+        collections.map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+    if (currentVal && [...filterCollection.options].some(o => o.value === currentVal)) {
+        filterCollection.value = currentVal;
+    }
 }

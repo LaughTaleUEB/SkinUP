@@ -115,59 +115,35 @@
 
                 <button class="sub-tab active" data-subtab="collections">Collections</button>
                 <button class="sub-tab" data-subtab="cases">Cases</button>
+                <button class="sub-tab" data-subtab="weekly-drops">Weekly Drops</button>
+                <button class="sub-tab" data-subtab="limited-edition">Limited Edition</button>
             </div>
 
             <!-- Collections İçeriği -->
             <div id="collections-tab-content">
                 <div id="collection-list">
-                    <!-- Beta: Harlequin Collection Card -->
-                    <div class="collection-card" id="harlequin-card">
-                        <div class="collection-icon">
-                            <img src="https://raw.githubusercontent.com/ByMykel/counter-strike-image-tracker/main/static/panorama/images/econ/set_icons/set_timed_drops_exuberant.svg" alt="Harlequin Collection Icon" onError="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                            <span style="display:none;">🎭</span>
-                        </div>
-                        <div class="collection-info">
-                            <h3>Harlequin Collection</h3>
-                            <p>19 Skins • Tap to view</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Koleksiyona tıklanınca açılacak skinler -->
-                <div id="skins-container" class="hidden">
-                    <h3>
-                        <span>Skins (The Harlequin Collection)</span>
-                    </h3>
-                    <div id="skins-list">
-                        <!-- JS ile buraya skinler dinamik yüklenecek -->
-                    </div>
+                    <!-- Dynamic collection cards populated from collections.json -->
                 </div>
             </div>
 
             <!-- Cases İçeriği -->
             <div id="cases-tab-content" class="hidden">
                 <div id="cases-list">
-                    <!-- Dreams & Nightmares Case Card -->
-                    <div class="collection-card case-card" id="dreams-card">
-                        <div class="collection-icon case-icon">
-                            <img src="https://community.akamai.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGJKz2lu_XsnXwtmkJjSU91dh8bj35VTqVBP4io_frnIV7Kb5OaU-JqfHDzXFle0u4LY8Gy_kkRgisGzcm4v4J3vDOAQmDMdyRvlK7EcmeCU3yw" alt="Dreams & Nightmares Case" onError="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                            <span style="display:none;">📦</span>
-                        </div>
-                        <div class="collection-info">
-                            <h3>Dreams <span class="amp">&amp;</span> Nightmares Case</h3>
-                            <p>17 Skins + Rare Special Item • Tap to view</p>
-                        </div>
-                    </div>
+                    <!-- Dynamic case cards populated from crates.json (type === "Case") -->
                 </div>
+            </div>
 
-                <!-- Kasaya tıklanınca açılacak skinler -->
-                <div id="case-skins-container" class="hidden">
-                    <h3>
-                        <span>Skins (Dreams <span class="amp">&amp;</span> Nightmares Case)</span>
-                    </h3>
-                    <div id="case-skins-list">
-                        <!-- JS ile buraya kasadaki skinler dinamik yüklenecek -->
-                    </div>
+            <!-- Weekly Drops İçeriği -->
+            <div id="weekly-drops-tab-content" class="hidden">
+                <div id="weekly-drops-list">
+                    <!-- Dynamic active weekly drop pool containers -->
+                </div>
+            </div>
+
+            <!-- Limited Edition İçeriği -->
+            <div id="limited-edition-tab-content" class="hidden">
+                <div id="limited-edition-list">
+                    <!-- Limited Edition Item collection -->
                 </div>
             </div>
         </section>
@@ -262,9 +238,42 @@
         </section>
     </main>
 
+    <!-- Container (Case / Collection / Weekly Drops / Limited Edition) Overlay Modal -->
+    <div id="container-modal" class="container-modal hidden" aria-hidden="true" role="dialog" aria-labelledby="container-modal-title" data-lenis-prevent="true">
+        <div class="container-modal-backdrop"></div>
+        <div class="container-modal-dialog" data-lenis-prevent="true">
+            <!-- Fixed Header -->
+            <div class="container-modal-header">
+                <div class="container-header-left">
+                    <div class="container-header-icon" id="container-modal-icon">
+                        <img src="" alt="" id="container-modal-icon-img" loading="lazy">
+                    </div>
+                    <div class="container-header-info">
+                        <div class="container-header-top-row">
+                            <h2 id="container-modal-title">Container Name</h2>
+                            <span id="container-modal-type" class="container-type-badge">Case</span>
+                        </div>
+                        <div class="container-header-meta">
+                            <span id="container-modal-count" class="container-count-badge">0 Items</span>
+                            <span class="container-subtext">Click any skin for wear &amp; float details</span>
+                        </div>
+                    </div>
+                </div>
+                <button class="container-close-btn" id="close-container-modal" type="button" title="Close" aria-label="Close modal">&times;</button>
+            </div>
+
+            <!-- Scrollable Skin Grid Body -->
+            <div class="container-modal-body" id="container-modal-body" data-lenis-prevent="true">
+                <div id="container-skins-list" class="container-skins-grid">
+                    <!-- Dynamic skin cards rendered here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Bilgi Balonu (Modal Popup / Mobile Bottom Sheet) -->
-    <div id="skin-modal" class="modal hidden">
-        <div class="modal-content">
+    <div id="skin-modal" class="modal hidden" data-lenis-prevent="true">
+        <div class="modal-content" data-lenis-prevent="true">
             <div class="modal-drag-handle"></div>
             <span class="close-btn" id="close-modal">&times;</span>
             
@@ -276,7 +285,6 @@
 
             <div class="modal-details">
                 <p><strong>Weapon:</strong> <span id="modal-weapon">AWP</span></p>
-                <p id="modal-phase-row" class="hidden"><strong>Phase / Variant:</strong> <span id="modal-phase" class="phase-badge">Phase 1</span></p>
                 <p><strong>Rarity:</strong> <span id="modal-rarity">Restricted</span></p>
                 <p><strong>Float Aralığı:</strong> <span id="modal-float">0.00 – 0.70</span></p>
             </div>
